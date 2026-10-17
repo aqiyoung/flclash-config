@@ -77,7 +77,7 @@ function main(config) {
     'proxy-groups': [
       {name: '默认代理', type: 'select', 'include-all': true, proxies: ['自动选择', '故障转移', 'DIRECT'], icon: 'https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Rocket.png'},
       {name: '自动选择', type: 'url-test', 'include-all': true, proxies: [], url: 'http://www.gstatic.com/generate_204', interval: 300, tolerance: 50, lazy: true, icon: 'https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Auto.png'},
-      {name: '故障转移', type: 'fallback', 'include-all': true, proxies: [], url: 'http://www.gstatic.com/generate_204', interval: 300, lazy: true, icon: 'https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Available.png'},
+      {name: '故障转移', type: 'fallback', 'include-all': true, proxies: [], url: 'http://www.gstatic.com/generate_204', interval: 300, lazy: true, icon: 'https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/Round_Robin.png'},
       {name: 'YouTube', type: 'select', 'include-all': true, proxies: ['自动选择', '故障转移', '默认代理', 'DIRECT'], icon: 'https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/YouTube.png'},
       {name: 'Google', type: 'select', 'include-all': true, proxies: ['自动选择', '故障转移', '默认代理', 'DIRECT'], icon: 'https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Google_Search.png'},
       {name: 'GoogleFCM', type: 'select', 'include-all': true, proxies: ['自动选择', '故障转移', '默认代理', 'DIRECT'], icon: 'https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Rocket.png'},
