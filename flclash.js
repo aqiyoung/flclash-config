@@ -39,6 +39,7 @@ const options = {
   Google: true,
   ChatGPT: true,
   GitHub: true,
+  OneDrive: true,
   Microsoft: true,
   APPLE: true,
   Telegram: true,
@@ -210,6 +211,7 @@ const providerDefs = {
   google_ip: geoip('google', 'google_ip'),
   ai: geosite('category-ai-!cn', 'ai'),
   github: geosite('github'),
+  onedrive: geosite('onedrive'),
   microsoft: geosite('microsoft'),
   apple: geosite('apple'),
   apple_ip: {
@@ -278,6 +280,7 @@ const serviceConfigs = [
   },
   { name: 'ChatGPT', icon: icon('ChatGPT.png'), providers: ['ai'], rules: ['RULE-SET,ai,ChatGPT'] },
   { name: 'GitHub', icon: icon('GitHub.png'), providers: ['github'], rules: ['RULE-SET,github,GitHub'] },
+  { name: 'OneDrive', icon: icon('OneDrive.png'), providers: ['onedrive'], rules: ['RULE-SET,onedrive,OneDrive'] },
   {
     name: 'Microsoft',
     icon: icon('Microsoft.png'),
