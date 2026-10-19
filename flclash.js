@@ -1,26 +1,689 @@
 /**
- * FlClash / Mihomo 配置脚本
- * 用法：在 FlClash 的脚本配置中导入本文件，然后将其应用到订阅配置。
- * 脚本接收订阅解析后的配置对象，并返回修改后的配置对象。
+ * FlClash / Mihomo 配置覆写脚本
  *
- * 改动（相对 hheshenghuan-cloud/ziji）：
- *   1. 新增「自动选择」(url-test) 与「故障转移」(fallback) 两个自动组；默认测速，并排除机场信息节点。
- *   2. 各策略组默认首选「自动选择」，其次「故障转移」。
- *   3. 分组图标与 rule-providers 统一走 jsDelivr CDN（避免 raw.githubusercontent.com 被墙）。
- *   4. external-controller 收紧到 127.0.0.1 + 强 secret；显式 mode: rule；DNS 增加冗余。
- *   5. 移除未被任何 rule 引用的 speedtest_domain 规则集（死配置）。
+ * 用法：在 FlClash 的「脚本」中导入本文件，然后将其应用到订阅配置。
+ * 入口 main(config) 接收订阅解析后的配置对象，返回覆写后的完整配置对象。
+ *
+ * 结构参考：https://github.com/AIsouler/MyClash/blob/main/Script/mihomoScript.js
+ *
+ * 相对上一版（hheshenghuan-cloud/ziji 简化版）的改动：
+ *   1. 节点治理：机场信息/广告/倍率节点不再只是被「自动选择」排除，而是直接从配置中剔除；
+ *      同时补全地区国旗、剥离零宽字符（防干扰）、按名去重，并修复 dialer-proxy 的改名引用。
+ *   2. 地区分组：按节点名自动归类 香港 / 日本 / 美国 / 新加坡 / 台湾，
+ *      每个地区可选生成「地区-自动选择」测速组，另生成「其他节点」收纳未归类节点。
+ *   3. 分流策略组：补齐 Steam / Twitter / Meta / Line / Spotify / PikPak / Crypto / AdBlock 等，
+ *      各分流组默认首选「默认代理」→「自动选择」。
+ *   4. 内核参数：补 find-process-mode、ntp；端口与嗅探配置保持原样。
+ *   5. DNS：fake-ip + 按规则集分流解析（国内走国内 DNS、私有网络走系统 DNS），
+ *      并补充 hosts（去掉 B 站 PCDN、修复 Google Play 下载）。
+ *   6. 兜底规则走 proxylite / geolocation-!cn / cn_ip，并可选屏蔽国外 QUIC。
  */
+
+// =====================================================================
+// 一、可调开关
+// =====================================================================
+
+const options = {
+  // ---- 基础策略组 ----
+  自动选择: true, // 所有节点自动测速（排除直连类节点）
+  故障转移: true, // 按顺序失败切换
+  负载均衡: true, // 按 sticky-sessions 分摊
+
+  // ---- 地区分组 ----
+  生成地区自动选择组: true, // 台湾-自动选择 等
+  隐藏地区手动选择组: false, // true 则隐藏「香港」这类手动组，只留自动组
+
+  // ---- 服务分流（键名 = 策略组名，false 则整组与规则一起移除）----
+  GoogleFCM: true,
+  YouTube: true,
+  Google: true,
+  ChatGPT: true,
+  GitHub: true,
+  Microsoft: true,
+  APPLE: true,
+  Telegram: true,
+  Steam: true,
+  Twitter: true,
+  Meta: true,
+  Line: true,
+  TikTok: true,
+  NETFLIX: true,
+  Disney: true,
+  Spotify: true,
+  PikPak: true,
+  Crypto: true,
+  AdBlock: true,
+
+  // ---- 行为 ----
+  过滤非地区节点: true, // 剔除名字像「剩余流量/到期时间/官网」这类非地区节点
+  屏蔽国外QUIC: true, // 强制国外流量回落到 TCP，规避 QUIC 走代理的不稳定
+  分流组添加所有节点: false, // true 则把全部节点塞进每个分流组（列表会很长）
+};
+
+// =====================================================================
+// 二、常量
+// =====================================================================
+
+// 图标走 jsDelivr，避免 raw.githubusercontent.com 被墙
 const ICON = 'https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/';
+// 规则集统一取 MetaCubeX/meta-rules-dat（.mrs 体积小、解析快）
+const RULESET = 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/';
+
 const TEST_URL = 'https://www.gstatic.com/generate_204';
-const EXCLUDE_FILTER = '(?i)(剩余|流量|到期|过期|重置|续费|套餐|官网|订阅|网址|购买|邀请|电报|群|t\\.me|traffic|expire|reset|renew)';
-const DEFAULT_PROXIES = ['自动选择', '故障转移', '默认代理', 'DIRECT'];
-const select = (name, icon) => ({name, type: 'select', 'include-all': true, proxies: [...DEFAULT_PROXIES], icon: ICON + icon});
+
+const icon = (name) => ICON + name;
+
+// 机场信息/广告节点的名字特征：命中即剔除
+const EXCLUDE_FILTER =
+  /群|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|电报|无法|说明|提示|访问|支持|教程|关注|更新|作者|加入|超时|收藏|优惠|福利|邀请|好友|失联|选择|剩余|公益|发布|DIZTNA|通路|登录|禁止|定时|渠道|牢记|永久|余额|阁下|本站|刷新|导航|建议|重置|以下|过滤|⚠️|@|t\.me\/\+|\bexpire\b|\bhttps?:\/\/|\.com|\btraffic\b/iu;
+
+// 零宽/不可见字符：机场常逐字符插入以干扰正则匹配。
+// 刻意保留 ZWNJ/ZWJ 与变体选择符（它们参与 emoji 与连字，有语义）。
+const INVISIBLE_CHARS = /[\u00AD\u180E\u200B\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\u115F\u1160\u3164\uFFA0]/g;
+
+// 直连出口：提供双栈 / IPv4/IPv6 优先等多种选择
+const directProxies = [
+  { name: '🇨🇳 直连 | 双栈', type: 'direct' },
+  { name: '🇨🇳 直连 | IPv4优先', type: 'direct', 'ip-version': 'ipv4-prefer' },
+  { name: '🇨🇳 直连 | IPv6优先', type: 'direct', 'ip-version': 'ipv6-prefer' },
+  { name: '🇨🇳 直连 | 仅IPv4', type: 'direct', 'ip-version': 'ipv4' },
+  { name: '🇨🇳 直连 | 仅IPv6', type: 'direct', 'ip-version': 'ipv6' },
+];
+const DIRECT_GROUP = '直连';
+const directProxyNames = directProxies.map((p) => p.name);
+
+const DEFAULT_GROUP = '默认代理';
+const AUTO_GROUPS = ['自动选择', '故障转移', '负载均衡'];
+const FINAL_GROUP = '漏网之鱼';
+const OTHER_GROUP = '其他节点';
+
+// =====================================================================
+// 三、地区定义
+// =====================================================================
+
+const regionDefinitions = [
+  {
+    name: '香港',
+    flag: '🇭🇰',
+    regex: /🇭🇰|香港|(?<![A-Za-z])HKG?(?![A-Za-z])|hong\s*kong/i,
+    icon: icon('Hong_Kong.png'),
+  },
+  {
+    name: '日本',
+    flag: '🇯🇵',
+    regex: /🇯🇵|日本|东京|大阪|京都|(?<![A-Za-z])JPN?(?![A-Za-z])|japan/i,
+    icon: icon('Japan.png'),
+  },
+  {
+    name: '美国',
+    flag: '🇺🇸',
+    regex:
+      /🇺🇸|美国|纽约|洛杉矶|旧金山|芝加哥|休斯顿|迈阿密|西雅图|波士顿|华盛顿|拉斯维加斯|圣何塞|圣地亚哥|(?<![A-Za-z])USA?(?![A-Za-z])|america|united\s*states/i,
+    icon: icon('America_Map.png'),
+  },
+  {
+    name: '新加坡',
+    flag: '🇸🇬',
+    regex: /🇸🇬|新加坡|狮城|(?<![A-Za-z])SGP?(?![A-Za-z])|singapore/i,
+    icon: icon('Singapore.png'),
+  },
+  {
+    name: '台湾',
+    flag: '🇹🇼',
+    regex: /🇹🇼|台湾|台北|高雄|(?<![A-Za-z])TWN?(?![A-Za-z])|taiwan/i,
+    icon: icon('Taiwan.png'),
+  },
+];
+
+// =====================================================================
+// 四、规则集（rule-providers）
+// =====================================================================
+
+// MetaCubeX 的 .mrs 规则集：behavior 决定取 geosite 还是 geoip
+const mrs = (behavior) => (file, name) => ({
+  type: 'http',
+  behavior,
+  format: 'mrs',
+  interval: 86400,
+  url: `${RULESET}geo/${behavior === 'domain' ? 'geosite' : 'geoip'}/${file}.mrs`,
+  path: `./ruleset/${name || file.replace(/[^A-Za-z0-9_.-]/g, '_')}.mrs`,
+});
+const geosite = mrs('domain');
+const geoip = mrs('ipcidr');
+
+// 所有规则集的定义（按名索引，构建时只挑选需要的）
+const providerDefs = {
+  // ---- 始终引入：直连类 ----
+  private: geosite('private'),
+  private_ip: geoip('private', 'private_ip'),
+  geolocation_cn: geosite('geolocation-cn', 'geolocation_cn'),
+  games_cn: geosite('category-games@cn', 'games_cn'), // 含 Steam 下载域名
+  apple_cn: geosite('apple@cn', 'apple_cn'),
+  microsoft_cn: geosite('microsoft@cn', 'microsoft_cn'),
+  nvidia_cn: geosite('nvidia@cn', 'nvidia_cn'),
+  cn_ip: geoip('cn', 'cn_ip'),
+
+  // ---- 始终引入：fake-ip 过滤与自定义 ----
+  fakeip_filter: {
+    type: 'http',
+    behavior: 'domain',
+    format: 'mrs',
+    interval: 86400,
+    url: 'https://cdn.jsdelivr.net/gh/DustinWin/ruleset_geodata@mihomo-ruleset/fakeip-filter.mrs',
+    path: './ruleset/fakeip_filter.mrs',
+  },
+  ziji: {
+    // 自建站/需要走代理的自定义域名
+    type: 'http',
+    behavior: 'domain',
+    format: 'yaml',
+    interval: 86400,
+    url: 'https://cdn.jsdelivr.net/gh/hheshenghuan-cloud/ziji@main/ziji.yaml',
+    path: './ruleset/ziji.yaml',
+  },
+  zijign: {
+    // 自建站里需要直连的国内域名
+    type: 'http',
+    behavior: 'domain',
+    format: 'yaml',
+    interval: 86400,
+    url: 'https://cdn.jsdelivr.net/gh/hheshenghuan-cloud/ziji@main/zijign.yaml',
+    path: './ruleset/zijign.yaml',
+  },
+  proxylite: {
+    // 轻量补漏：未被前面规则命中的常见需要代理的域名
+    type: 'http',
+    behavior: 'classical',
+    format: 'text',
+    interval: 86400,
+    url: 'https://cdn.jsdelivr.net/gh/qichiyuhub/rule@main/rules/proxy.list',
+    path: './ruleset/proxylite.list',
+  },
+
+  // ---- 始终引入：兜底 ----
+  'geolocation-!cn': geosite('geolocation-!cn', 'geolocation_not_cn'),
+
+  // ---- 服务分流 ----
+  googlefcm: geosite('googlefcm'),
+  youtube: geosite('youtube'),
+  google: geosite('google'),
+  google_ip: geoip('google', 'google_ip'),
+  ai: geosite('category-ai-!cn', 'ai'),
+  github: geosite('github'),
+  microsoft: geosite('microsoft'),
+  apple: geosite('apple'),
+  apple_ip: {
+    type: 'http',
+    behavior: 'ipcidr',
+    format: 'mrs',
+    interval: 86400,
+    url: `${RULESET}geo-lite/geoip/apple.mrs`,
+    path: './ruleset/apple_ip.mrs',
+  },
+  telegram: geosite('telegram'),
+  telegram_ip: geoip('telegram', 'telegram_ip'),
+  steam: geosite('steam'),
+  twitter: geosite('twitter'),
+  twitter_ip: geoip('twitter', 'twitter_ip'),
+  meta: geosite('meta'),
+  facebook_ip: geoip('facebook', 'facebook_ip'),
+  line: geosite('line'),
+  tiktok: geosite('tiktok'),
+  netflix: geosite('netflix'),
+  netflix_ip: geoip('netflix', 'netflix_ip'),
+  disney: {
+    type: 'http',
+    behavior: 'domain',
+    format: 'mrs',
+    interval: 86400,
+    url: 'https://cdn.jsdelivr.net/gh/GitMetaio/rule@master/rule/Clash/Disney/Disney_OCD_Domain.mrs',
+    path: './ruleset/disney.mrs',
+  },
+  spotify: geosite('spotify'),
+  pikpak: geosite('pikpak'),
+  cryptocurrency: geosite('category-cryptocurrency', 'cryptocurrency'),
+  category_ads: geosite('category-ads', 'category_ads'),
+};
+
+// 无条件引入的规则集
+const BASE_PROVIDERS = [
+  'private',
+  'private_ip',
+  'geolocation_cn',
+  'games_cn',
+  'apple_cn',
+  'microsoft_cn',
+  'nvidia_cn',
+  'cn_ip',
+  'fakeip_filter',
+  'ziji',
+  'zijign',
+  'proxylite',
+  'geolocation-!cn',
+];
+
+// =====================================================================
+// 五、服务分流定义
+// =====================================================================
+
+// providers 为依赖的规则集名；direct 表示给该组补一个「直连」选项
+const serviceConfigs = [
+  { name: 'GoogleFCM', icon: icon('Rocket.png'), providers: ['googlefcm'], rules: ['RULE-SET,googlefcm,GoogleFCM'] },
+  { name: 'YouTube', icon: icon('YouTube.png'), providers: ['youtube'], rules: ['RULE-SET,youtube,YouTube'] },
+  {
+    name: 'Google',
+    icon: icon('Google_Search.png'),
+    providers: ['google', 'google_ip'],
+    rules: ['RULE-SET,google,Google', 'RULE-SET,google_ip,Google,no-resolve'],
+  },
+  { name: 'ChatGPT', icon: icon('ChatGPT.png'), providers: ['ai'], rules: ['RULE-SET,ai,ChatGPT'] },
+  { name: 'GitHub', icon: icon('GitHub.png'), providers: ['github'], rules: ['RULE-SET,github,GitHub'] },
+  {
+    name: 'Microsoft',
+    icon: icon('Microsoft.png'),
+    direct: true,
+    providers: ['microsoft'],
+    rules: ['RULE-SET,microsoft,Microsoft'],
+  },
+  {
+    name: 'APPLE',
+    icon: icon('Apple.png'),
+    direct: true,
+    providers: ['apple', 'apple_ip'],
+    rules: ['RULE-SET,apple,APPLE', 'RULE-SET,apple_ip,APPLE,no-resolve'],
+  },
+  {
+    name: 'Telegram',
+    icon: icon('Telegram.png'),
+    providers: ['telegram', 'telegram_ip'],
+    rules: ['RULE-SET,telegram,Telegram', 'RULE-SET,telegram_ip,Telegram,no-resolve'],
+  },
+  { name: 'Steam', icon: icon('Steam.png'), direct: true, providers: ['steam'], rules: ['RULE-SET,steam,Steam'] },
+  {
+    name: 'Twitter',
+    icon: icon('Twitter.png'),
+    providers: ['twitter', 'twitter_ip'],
+    rules: ['RULE-SET,twitter,Twitter', 'RULE-SET,twitter_ip,Twitter,no-resolve'],
+  },
+  {
+    name: 'Meta',
+    icon: icon('Facebook.png'),
+    providers: ['meta', 'facebook_ip'],
+    rules: ['RULE-SET,meta,Meta', 'RULE-SET,facebook_ip,Meta,no-resolve'],
+  },
+  { name: 'Line', icon: icon('Line.png'), providers: ['line'], rules: ['RULE-SET,line,Line'] },
+  { name: 'TikTok', icon: icon('TikTok.png'), providers: ['tiktok'], rules: ['RULE-SET,tiktok,TikTok'] },
+  {
+    name: 'NETFLIX',
+    icon: icon('Netflix.png'),
+    providers: ['netflix', 'netflix_ip'],
+    rules: ['RULE-SET,netflix,NETFLIX', 'RULE-SET,netflix_ip,NETFLIX,no-resolve'],
+  },
+  { name: 'Disney', icon: icon('Disney+.png'), providers: ['disney'], rules: ['RULE-SET,disney,Disney'] },
+  { name: 'Spotify', icon: icon('Spotify.png'), direct: true, providers: ['spotify'], rules: ['RULE-SET,spotify,Spotify'] },
+  { name: 'PikPak', icon: icon('Nfcloud.png'), direct: true, providers: ['pikpak'], rules: ['RULE-SET,pikpak,PikPak'] },
+  {
+    name: 'Crypto',
+    icon: icon('Cryptocurrency.png'),
+    providers: ['cryptocurrency'],
+    rules: ['RULE-SET,cryptocurrency,Crypto'],
+  },
+  {
+    name: 'AdBlock',
+    icon: icon('AdBlack.png'),
+    reject: true,
+    providers: ['category_ads'],
+    rules: ['RULE-SET,category_ads,AdBlock'],
+  },
+];
+
+// =====================================================================
+// 六、节点过滤与重命名
+// =====================================================================
+
+const regionMatchCache = new Map();
+
+// 取「可用于匹配」的节点名：剥离零宽/不可见字符
+function toMatchableName(name) {
+  return typeof name === 'string' ? name.replace(INVISIBLE_CHARS, '') : name;
+}
+
+// 节点命中的地区集合（带缓存，避免重复跑正则）
+function getMatchedRegions(proxyName) {
+  if (regionMatchCache.has(proxyName)) return regionMatchCache.get(proxyName);
+  const regions = regionDefinitions.filter((region) => region.regex.test(toMatchableName(proxyName)));
+  regionMatchCache.set(proxyName, regions);
+  return regions;
+}
+
+const FLAG_REGEX = /[\u{1F1E6}-\u{1F1FF}]{2}/u;
+
+// 标准化节点名：剥离不可见字符、补地区国旗、折叠多余空格
+function normalizeProxyName(proxy) {
+  const originalName = proxy.name;
+  const matchableName = toMatchableName(originalName);
+  const flag = matchableName.match(FLAG_REGEX)?.[0];
+  const nameWithoutFlag = (flag ? matchableName.replace(flag, '') : matchableName).replace(/\s+/g, ' ').trim();
+
+  const matchedRegions = getMatchedRegions(originalName);
+  const regionFlag = flag || matchedRegions.find((region) => region.flag)?.flag;
+  const normalizedName = regionFlag ? `${regionFlag} ${nameWithoutFlag}` : nameWithoutFlag;
+
+  if (normalizedName !== originalName) regionMatchCache.set(normalizedName, matchedRegions);
+  return normalizedName === originalName ? proxy : { ...proxy, name: normalizedName };
+}
+
+// 节点被重命名时同步更新 dialer-proxy 引用；目标已不存在则删除该字段
+function fixDialerProxy(proxy, renameMap, normalizedNames) {
+  const target = proxy['dialer-proxy'];
+  if (!target) return proxy;
+  if (renameMap.has(target)) return { ...proxy, 'dialer-proxy': renameMap.get(target) };
+  if (normalizedNames.has(target)) return proxy;
+  const copy = { ...proxy };
+  delete copy['dialer-proxy'];
+  return copy;
+}
+
+// 过滤 → 重命名 → 去重 → 修复引用
+function filterAndNormalizeProxies(config) {
+  regionMatchCache.clear();
+
+  const originalProxies = config.proxies || [];
+
+  const filteredRawProxies = originalProxies.filter((proxy) => {
+    const type = String(proxy.type ?? '').toLowerCase();
+    if (type === 'direct' || type === 'reject' || type === 'rematch') return false;
+    if (!options.过滤非地区节点) return true;
+
+    const matchableName = toMatchableName(proxy.name);
+    const isRegionProxy = getMatchedRegions(proxy.name).length > 0;
+    // 地区节点一律保留；非地区节点仅在不像信息节点时保留
+    return isRegionProxy || !EXCLUDE_FILTER.test(matchableName);
+  });
+
+  const renameMap = new Map();
+  const uniqueNames = new Set();
+  const normalizedProxies = [];
+
+  for (const rawProxy of filteredRawProxies) {
+    const normalized = normalizeProxyName(rawProxy);
+    if (normalized.name !== rawProxy.name) {
+      // 原名与「剥离不可见字符后的名字」都登记，兼容 dialer-proxy 两种写法
+      renameMap.set(rawProxy.name, normalized.name);
+      renameMap.set(toMatchableName(rawProxy.name), normalized.name);
+    }
+    if (!uniqueNames.has(normalized.name)) {
+      uniqueNames.add(normalized.name);
+      normalizedProxies.push(normalized);
+    }
+  }
+
+  if (!normalizedProxies.length) {
+    throw new Error('配置文件中未找到任何可用代理节点，请使用机场提供的、包含内联 proxies 的配置文件进行覆写');
+  }
+
+  const normalizedNames = new Set(normalizedProxies.map((p) => p.name));
+  return normalizedProxies.map((proxy) => fixDialerProxy(proxy, renameMap, normalizedNames));
+}
+
+// =====================================================================
+// 七、策略组
+// =====================================================================
+
+const commonGroupOption = {
+  interval: 300,
+  timeout: 3000,
+  'max-failed-times': 3,
+  lazy: true,
+};
+
+const baseSelect = { ...commonGroupOption, type: 'select' };
+
+// 引用全部节点的组：排除直连类出口与残余信息节点
+const includeAllOption = {
+  'include-all': true,
+  'exclude-type': 'DIRECT',
+  'exclude-filter': EXCLUDE_FILTER,
+};
+
+// 按地区把节点归类，生成「地区」手动组与「地区-自动选择」测速组
+function buildRegionGroups(filteredProxies) {
+  const buckets = Object.fromEntries(regionDefinitions.map(({ name }) => [name, []]));
+  const otherProxies = [];
+
+  for (const proxy of filteredProxies) {
+    const matched = getMatchedRegions(proxy.name);
+    for (const region of matched) buckets[region.name].push(proxy.name);
+    if (!matched.length) otherProxies.push(proxy.name);
+  }
+
+  const groups = [];
+  const selectNames = [];
+  const hiddenManual = options.隐藏地区手动选择组;
+
+  for (const region of regionDefinitions) {
+    const proxies = buckets[region.name];
+    if (!proxies.length) continue;
+
+    if (options.生成地区自动选择组) {
+      const autoName = `${region.name}-自动选择`;
+      groups.push({
+        ...commonGroupOption,
+        type: 'url-test',
+        name: autoName,
+        proxies,
+        tolerance: 50,
+        hidden: true,
+        icon: icon('Auto.png'),
+      });
+      groups.push({ ...baseSelect, name: region.name, proxies: [...proxies, autoName], icon: region.icon, hidden: hiddenManual });
+    } else {
+      groups.push({ ...baseSelect, name: region.name, proxies, icon: region.icon, hidden: hiddenManual });
+    }
+    selectNames.push(region.name);
+  }
+
+  if (otherProxies.length) {
+    groups.push({ ...baseSelect, name: OTHER_GROUP, proxies: otherProxies, icon: icon('World_Map.png') });
+    selectNames.push(OTHER_GROUP);
+  }
+
+  return { groups, selectNames };
+}
+
+// 构建全部策略组与规则
+function buildGroupsAndRules(filteredProxies, regionGroups) {
+  const allNodeNames = filteredProxies.map((p) => p.name);
+  const enabledServices = serviceConfigs.filter((svc) => options[svc.name]);
+  const regionSelectNames = regionGroups.selectNames;
+
+  // 收集需要的规则集
+  const providerNames = new Set(BASE_PROVIDERS);
+  for (const svc of enabledServices) {
+    for (const name of svc.providers || []) providerNames.add(name);
+  }
+  const ruleProviders = Object.fromEntries([...providerNames].map((name) => [name, providerDefs[name]]));
+
+  // 分流组的公共选项：默认代理 → 自动组 → 地区组 →（可选）直连
+  const serviceProxies = (svc) => {
+    if (svc.reject) return ['REJECT', 'REJECT-DROP', 'PASS'];
+    const list = [DEFAULT_GROUP, ...AUTO_GROUPS.filter((g) => options[g]), ...regionSelectNames];
+    if (svc.direct) list.push(DIRECT_GROUP);
+    if (options.分流组添加所有节点) list.push(...allNodeNames);
+    return list;
+  };
+
+  const autoGroups = [
+    { ...commonGroupOption, ...includeAllOption, type: 'url-test', name: '自动选择', proxies: [], tolerance: 50, hidden: true, icon: icon('Auto.png') },
+    { ...commonGroupOption, ...includeAllOption, type: 'fallback', name: '故障转移', proxies: [], hidden: true, icon: icon('Round_Robin.png') },
+    { ...commonGroupOption, ...includeAllOption, type: 'load-balance', strategy: 'sticky-sessions', name: '负载均衡', proxies: [], hidden: true, icon: icon('Round_Robin_1.png') },
+  ].filter((g) => options[g.name]);
+
+  const masterGroup = {
+    ...baseSelect,
+    ...includeAllOption,
+    name: DEFAULT_GROUP,
+    proxies: [...AUTO_GROUPS.filter((g) => options[g]), ...regionSelectNames, DIRECT_GROUP],
+    icon: icon('Proxy.png'),
+  };
+
+  const serviceGroups = enabledServices.map((svc) => ({
+    ...baseSelect,
+    name: svc.name,
+    proxies: serviceProxies(svc),
+    icon: svc.icon,
+  }));
+
+  const finalGroup = {
+    ...baseSelect,
+    name: FINAL_GROUP,
+    proxies: [DEFAULT_GROUP, DIRECT_GROUP, ...regionSelectNames],
+    icon: icon('Final.png'),
+  };
+
+  const directGroup = {
+    ...baseSelect,
+    name: DIRECT_GROUP,
+    proxies: directProxyNames,
+    icon: icon('Direct.png'),
+  };
+
+  const globalGroup = {
+    ...baseSelect,
+    name: 'GLOBAL',
+    proxies: [
+      DEFAULT_GROUP,
+      ...autoGroups.map((g) => g.name),
+      ...serviceGroups.map((g) => g.name),
+      FINAL_GROUP,
+      DIRECT_GROUP,
+      ...regionGroups.groups.map((g) => g.name),
+    ],
+    icon: icon('Global.png'),
+  };
+
+  // ---- 规则 ----
+  // 前置：国内/私有网络优先直连，避免被后面的服务规则截走
+  const prefixRules = [
+    'RULE-SET,private,直连',
+    'RULE-SET,private_ip,直连,no-resolve',
+    'RULE-SET,geolocation_cn,直连',
+    'RULE-SET,zijign,直连',
+    'RULE-SET,games_cn,直连',
+    'RULE-SET,apple_cn,直连',
+    'RULE-SET,microsoft_cn,直连',
+    'RULE-SET,nvidia_cn,直连',
+  ];
+
+  // 屏蔽国外 QUIC：非中国大陆的 UDP/443 一律拒绝，逼迫回落 TCP
+  const quicRule = options.屏蔽国外QUIC
+    ? ['AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,geolocation_cn),(RULE-SET,cn_ip,no-resolve)))))),REJECT']
+    : [];
+
+  // 自建/默认走代理的域名 + 特定进程
+  const ownRules = ['RULE-SET,ziji,默认代理', 'PROCESS-NAME,com.tencent.ig,默认代理'];
+
+  // 服务规则：AdBlock 放最前，其余按声明顺序
+  const serviceRules = [
+    ...enabledServices.filter((svc) => svc.name === 'AdBlock').flatMap((svc) => svc.rules || []),
+    ...enabledServices.filter((svc) => svc.name !== 'AdBlock').flatMap((svc) => svc.rules || []),
+  ];
+
+  const tailRules = [
+    'RULE-SET,proxylite,默认代理',
+    'RULE-SET,geolocation-!cn,默认代理',
+    'RULE-SET,cn_ip,直连,no-resolve',
+    `MATCH,${FINAL_GROUP}`,
+  ];
+
+  const rules = [...prefixRules, ...quicRule, ...ownRules, ...serviceRules, ...tailRules];
+
+  const proxyGroups = [globalGroup, masterGroup, ...autoGroups, ...serviceGroups, finalGroup, directGroup, ...regionGroups.groups];
+
+  return { proxyGroups, rules, ruleProviders };
+}
+
+// =====================================================================
+// 八、DNS 与 hosts
+// =====================================================================
+
+function buildDnsAndHosts() {
+  const cnDns = ['223.5.5.5', '119.29.29.29'];
+  const cnDoh = ['https://dns.alidns.com/dns-query', 'https://doh.pub/dns-query'];
+
+  const fakeIpFilter = ['rule-set:private', 'rule-set:fakeip_filter', 'rule-set:geolocation_cn', '+.push.apple.com', 'mtalk.google.com'];
+  if (options.GoogleFCM) fakeIpFilter.push('rule-set:googlefcm');
+
+  const nameserverPolicy = {
+    'rule-set:private': 'system',
+    'rule-set:geolocation_cn': cnDoh,
+  };
+  if (options.GoogleFCM) nameserverPolicy['rule-set:googlefcm'] = ['https://8.8.8.8/dns-query#默认代理'];
+
+  const dns = {
+    enable: true,
+    ipv6: false,
+    listen: '0.0.0.0:1053',
+    'cache-algorithm': 'arc',
+    'use-hosts': true,
+    'use-system-hosts': true,
+    'respect-rules': true,
+    'enhanced-mode': 'fake-ip',
+    'fake-ip-range': '198.18.0.1/16',
+    'fake-ip-filter-mode': 'blacklist',
+    'fake-ip-filter': fakeIpFilter,
+    // default-nameserver 负责解析下面这些 DNS 服务器自身的域名，必须是 IP
+    'default-nameserver': cnDns,
+    'proxy-server-nameserver': cnDns,
+    'direct-nameserver': cnDns,
+    'direct-nameserver-follow-policy': true,
+    // 默认解析走境外 DNS（经代理），国内域名由 nameserver-policy 分流
+    nameserver: ['https://8.8.8.8/dns-query#默认代理', 'https://1.1.1.1/dns-query#默认代理'],
+    'nameserver-policy': nameserverPolicy,
+  };
+
+  const hosts = {
+    // 避免解析 DoH 服务器自身域名时出现循环依赖
+    'cloudflare-dns.com': ['1.1.1.1', '1.0.0.1'],
+    'dns.google': ['8.8.8.8', '8.8.4.4'],
+    'doh.pub': ['1.12.12.12', '120.53.53.53'],
+    'dns.alidns.com': ['223.5.5.5', '223.6.6.6'],
+
+    // 解决 Google Play 无法下载的问题
+    'services.googleapis.cn': 'services.googleapis.com',
+
+    // 屏蔽 B 站 PCDN，缓解视频/直播卡顿
+    '+.mcdn.bilivideo.com': ['0.0.0.0'],
+    '+.mcdn.bilivideo.cn': ['0.0.0.0'],
+    '+.edge.mountaintoys.cn': ['0.0.0.0'],
+    '+.h2.smtcdns.net': ['0.0.0.0'],
+  };
+
+  return { dns, hosts };
+}
+
+// =====================================================================
+// 九、主入口
+// =====================================================================
 
 function main(config) {
   config = config || {};
 
-  Object.assign(config, {
+  if (config['proxy-providers'] && Object.keys(config['proxy-providers']).length > 0) {
+    throw new Error('订阅使用了 proxy-providers，节点过滤与地区分组无法生效，请改用包含内联 proxies 的配置文件');
+  }
+
+  const filteredProxies = filterAndNormalizeProxies(config);
+  const regionGroups = buildRegionGroups(filteredProxies);
+  const { proxyGroups, rules, ruleProviders } = buildGroupsAndRules(filteredProxies, regionGroups);
+  const { dns, hosts } = buildDnsAndHosts();
+
+  return {
+    ...config,
+
     mode: 'rule',
+    ipv6: false,
+
     'mixed-port': 7890,
     'socks-port': 7891,
     'redir-port': 7892,
@@ -28,137 +691,53 @@ function main(config) {
     'tproxy-port': 7894,
     'allow-lan': true,
     'bind-address': '*',
-    ipv6: false,
     'unified-delay': true,
     'tcp-concurrent': true,
     'log-level': 'warning',
     'keep-alive-idle': 600,
     'keep-alive-interval': 15,
+    'find-process-mode': 'strict',
+
     'external-controller': '127.0.0.1:9090',
     secret: 'f4ae40b9db9b68d2f8bbea24434f97ef',
+
     profile: {
       'store-selected': true,
-      'store-fake-ip': true
+      'store-fake-ip': true,
     },
+
+    ntp: {
+      enable: true,
+      'write-to-system': false,
+      server: 'ntp.aliyun.com',
+      port: 123,
+      interval: 60,
+    },
+
     sniffer: {
       enable: true,
       'force-dns-mapping': false,
       'parse-pure-ip': true,
       sniff: {
-        HTTP: {
-          ports: [80, '8080-8880'],
-          'override-destination': false
-        },
-        TLS: {
-          ports: [443, 8443],
-          'override-destination': false
-        },
-        QUIC: {
-          ports: [443, 8443],
-          'override-destination': false
-        }
+        HTTP: { ports: [80, '8080-8880'], 'override-destination': false },
+        TLS: { ports: [443, 8443], 'override-destination': false },
+        QUIC: { ports: [443, 8443], 'override-destination': false },
       },
-      'skip-domain': ['Mijia Cloud', '+.push.apple.com', 'mtalk.google.com']
+      'skip-domain': ['Mijia Cloud', '+.push.apple.com', 'mtalk.google.com'],
     },
+
     tun: {
       enable: true,
       stack: 'mixed',
-      'dns-hijack': ['any:53', 'tcp://any:53']
+      'dns-hijack': ['any:53', 'tcp://any:53'],
     },
-    dns: {
-      enable: true,
-      'cache-algorithm': 'arc',
-      listen: '0.0.0.0:1053',
-      ipv6: false,
-      'respect-rules': true,
-      'enhanced-mode': 'fake-ip',
-      'fake-ip-range': '198.18.0.1/16',
-      'fake-ip-filter-mode': 'blacklist',
-      'direct-nameserver-follow-policy': true,
-      'nameserver-policy': {
-        'rule-set:googlefcm': ['https://8.8.8.8/dns-query#默认代理']
-      },
-      'default-nameserver': ['https://223.5.5.5/dns-query'],
-      'proxy-server-nameserver': ['https://dns.alidns.com/dns-query', 'https://doh.pub/dns-query'],
-      'direct-nameserver': ['https://dns.alidns.com/dns-query', 'https://doh.pub/dns-query'],
-      nameserver: ['https://8.8.8.8/dns-query', 'https://1.1.1.1/dns-query'],
-      'fake-ip-filter': ['+.push.apple.com', 'mtalk.google.com', 'rule-set:fakeipfilter_domain']
-    },
-    'proxy-groups': [
-      {name: '默认代理', type: 'select', 'include-all': true, proxies: ['自动选择', '故障转移', 'DIRECT'], icon: ICON + 'Rocket.png'},
-      {name: '自动选择', type: 'url-test', 'include-all': true, proxies: [], url: TEST_URL, interval: 300, tolerance: 50, lazy: true, 'exclude-filter': EXCLUDE_FILTER, icon: ICON + 'Auto.png'},
-      {name: '故障转移', type: 'fallback', 'include-all': true, proxies: [], url: TEST_URL, interval: 300, lazy: true, 'exclude-filter': EXCLUDE_FILTER, icon: ICON + 'Round_Robin.png'},
-      select('YouTube', 'YouTube.png'),
-      select('Google', 'Google_Search.png'),
-      select('GoogleFCM', 'Rocket.png'),
-      select('ChatGPT', 'ChatGPT.png'),
-      select('GitHub', 'GitHub.png'),
-      select('OneDrive', 'OneDrive.png'),
-      select('Microsoft', 'Microsoft.png'),
-      select('TikTok', 'TikTok.png'),
-      select('APPLE', 'Apple.png'),
-      select('Telegram', 'Telegram.png'),
-      select('NETFLIX', 'Netflix.png'),
-      select('Disney', 'Disney%2B.png'),
-      {name: '国内网络', type: 'select', 'include-all': true, proxies: ['DIRECT', '默认代理', '自动选择', '故障转移'], icon: ICON + 'China.png'},
-      select('漏网之鱼', 'Final.png')
-    ],
-    rules: [
-      'PROCESS-NAME,com.tencent.ig,默认代理',
-      'RULE-SET,ziji,默认代理',
-      'RULE-SET,private_ip,国内网络,no-resolve',
-      'RULE-SET,private_domain,国内网络',
-      'RULE-SET,cn_domain,国内网络',
-      'RULE-SET,cn_ip,国内网络',
-      'RULE-SET,zijign,国内网络',
-      'RULE-SET,googlefcm,GoogleFCM',
-      'RULE-SET,fakeipfilter_domain,国内网络',
-      'RULE-SET,ai,ChatGPT',
-      'RULE-SET,github_domain,GitHub',
-      'RULE-SET,youtube_domain,YouTube',
-      'RULE-SET,google_domain,Google',
-      'RULE-SET,onedrive_domain,OneDrive',
-      'RULE-SET,microsoft_domain,Microsoft',
-      'RULE-SET,apple_domain,APPLE',
-      'RULE-SET,tiktok_domain,TikTok',
-      'RULE-SET,telegram_domain,Telegram',
-      'RULE-SET,netflix_domain,NETFLIX',
-      'RULE-SET,disney_domain,Disney',
-      'RULE-SET,apple_ip,APPLE',
-      'RULE-SET,google_ip,Google',
-      'RULE-SET,netflix_ip,NETFLIX',
-      'RULE-SET,telegram_ip,Telegram',
-      'RULE-SET,proxylite,默认代理',
-      'RULE-SET,geolocation-!cn,默认代理',
-      'MATCH,漏网之鱼'
-    ],
-    'rule-providers': {
-      ziji: {type: 'http', interval: 86400, behavior: 'domain', format: 'yaml', url: 'https://cdn.jsdelivr.net/gh/hheshenghuan-cloud/ziji@main/ziji.yaml'},
-      zijign: {type: 'http', interval: 86400, behavior: 'domain', format: 'yaml', url: 'https://cdn.jsdelivr.net/gh/hheshenghuan-cloud/ziji@main/zijign.yaml'},
-      googlefcm: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/googlefcm.mrs'},
-      fakeipfilter_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/DustinWin/ruleset_geodata@mihomo-ruleset/fakeip-filter.mrs'},
-      private_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/private.mrs'},
-      proxylite: {type: 'http', interval: 86400, behavior: 'classical', format: 'text', url: 'https://cdn.jsdelivr.net/gh/qichiyuhub/rule@main/rules/proxy.list'},
-      ai: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ai-!cn.mrs'},
-      youtube_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/youtube.mrs'},
-      google_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/google.mrs'},
-      github_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/github.mrs'},
-      telegram_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/telegram.mrs'},
-      netflix_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/netflix.mrs'},
-      onedrive_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/onedrive.mrs'},
-      microsoft_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/microsoft.mrs'},
-      apple_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple.mrs'},
-      tiktok_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/tiktok.mrs'},
-      'geolocation-!cn': {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/geolocation-!cn.mrs'},
-      cn_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/cn.mrs'},
-      disney_domain: {type: 'http', interval: 86400, behavior: 'domain', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/GitMetaio/rule@master/rule/Clash/Disney/Disney_OCD_Domain.mrs'},
-      private_ip: {type: 'http', interval: 86400, behavior: 'ipcidr', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/private.mrs'},
-      cn_ip: {type: 'http', interval: 86400, behavior: 'ipcidr', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.mrs'},
-      google_ip: {type: 'http', interval: 86400, behavior: 'ipcidr', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/google.mrs'},
-      telegram_ip: {type: 'http', interval: 86400, behavior: 'ipcidr', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/telegram.mrs'},
-      netflix_ip: {type: 'http', interval: 86400, behavior: 'ipcidr', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/netflix.mrs'},
-      apple_ip: {type: 'http', interval: 86400, behavior: 'ipcidr', format: 'mrs', url: 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo-lite/geoip/apple.mrs'}
-    }
-  });
-  return config;
+
+    dns,
+    hosts,
+
+    proxies: [...filteredProxies, ...directProxies],
+    'proxy-groups': proxyGroups,
+    'rule-providers': ruleProviders,
+    rules,
+  };
 }
