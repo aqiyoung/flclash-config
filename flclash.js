@@ -74,9 +74,13 @@ const TEST_URL = 'https://www.gstatic.com/generate_204';
 
 const icon = (name) => ICON + name;
 
-// 机场信息/广告节点的名字特征：命中即剔除
-const EXCLUDE_FILTER =
-  /群|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|电报|无法|说明|提示|访问|支持|教程|关注|更新|作者|加入|超时|收藏|优惠|福利|邀请|好友|失联|选择|剩余|公益|发布|DIZTNA|通路|登录|禁止|定时|渠道|牢记|永久|余额|阁下|本站|刷新|导航|建议|重置|以下|过滤|⚠️|@|t\.me\/\+|\bexpire\b|\bhttps?:\/\/|\.com|\btraffic\b/iu;
+// 机场信息/广告节点的名字特征：命中即剔除。
+// 注意：exclude-filter 写进配置时必须是「字符串」——放 RegExp 对象会被序列化成 {}，
+// 内核会报 `expected type 'string', got 'map[string]interface {}'` 并拒绝整个配置。
+const EXCLUDE_FILTER_BODY =
+  '群|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|电报|无法|说明|提示|访问|支持|教程|关注|更新|作者|加入|超时|收藏|优惠|福利|邀请|好友|失联|选择|剩余|公益|发布|DIZTNA|通路|登录|禁止|定时|渠道|牢记|永久|余额|阁下|本站|刷新|导航|建议|重置|以下|过滤|⚠️|@|t\\.me\\/\\+|\\bexpire\\b|\\bhttps?:\\/\\/|\\.com|\\btraffic\\b';
+const EXCLUDE_FILTER = new RegExp(EXCLUDE_FILTER_BODY, 'iu');
+const EXCLUDE_FILTER_CONFIG = `(?i)${EXCLUDE_FILTER_BODY}`;
 
 // 零宽/不可见字符：机场常逐字符插入以干扰正则匹配。
 // 刻意保留 ZWNJ/ZWJ 与变体选择符（它们参与 emoji 与连字，有语义）。
@@ -446,7 +450,7 @@ const baseSelect = { ...commonGroupOption, type: 'select' };
 const includeAllOption = {
   'include-all': true,
   'exclude-type': 'DIRECT',
-  'exclude-filter': EXCLUDE_FILTER,
+  'exclude-filter': EXCLUDE_FILTER_CONFIG,
 };
 
 // 按地区把节点归类，生成「地区」手动组与「地区-自动选择」测速组
