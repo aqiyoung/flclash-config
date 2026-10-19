@@ -22,15 +22,26 @@
 https://cdn.jsdelivr.net/gh/aqiyoung/flclash-config@main/flclash.js
 ```
 
-备选（raw，但国内可能被墙）：
+备选链接：
 
-```
-https://raw.githubusercontent.com/aqiyoung/flclash-config/main/flclash.js
-```
+| 链接 | 说明 |
+| --- | --- |
+| `https://raw.githubusercontent.com/aqiyoung/flclash-config/main/flclash.js` | 改动即时生效，但国内可能被墙 |
+| `https://gh-proxy.com/https://raw.githubusercontent.com/aqiyoung/flclash-config/main/flclash.js` | raw 的国内加速代理，实测即时生效 |
+| `https://cdn.jsdelivr.net/gh/aqiyoung/flclash-config@<commit>/flclash.js` | 把 `<commit>` 换成最新 commit 的短哈希（如 `@22fc01e`） |
 
-> **关于更新：** jsDelivr 对分支（`@main`）有缓存，脚本改动后可能需要一段时间才会同步过来。
-> 想要「一改就生效」，可以在 jsDelivr 的 URL 后加一个版本参数，例如
-> `...@main/flclash.js?v=20261019`，改一下参数就会绕过缓存。
+> **关于更新延迟**
+>
+> jsDelivr 对分支 `@main` 的缓存是 **12 小时**（响应头 `s-maxage=43200`），所以脚本改动后：
+> - 最长可能要等半天才会全量生效；
+> - 而且不同网络、不同边缘节点可能拿到**不同版本**，会看到新旧混用的情况。
+>
+> 另外，在 URL 后面加 `?v=xxx` 之类的参数**没有用**——jsDelivr 的缓存键不包含 query，实测过。
+>
+> 想立刻拿到最新版，二选一：
+> 1. 把 URL 换成上面的 **raw** 或 **gh-proxy** 链接；
+> 2. 把 jsDelivr 链接里的 `@main` 换成**最新 commit 的短哈希**（例如 `...@22fc01e/flclash.js`）。
+>    哈希一变就是全新的缓存键，立刻生效；同一个哈希的内容永远不会变。
 
 ---
 
