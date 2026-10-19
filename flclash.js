@@ -65,8 +65,9 @@ const options = {
 // 二、常量
 // =====================================================================
 
-// 图标走 jsDelivr，避免 raw.githubusercontent.com 被墙
-const ICON = 'https://cdn.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/';
+// 图标走 jsDelivr 镜像，比 cdn.jsdelivr.net 在国内稳定，也避开被墙的 raw.githubusercontent.com
+const ICON_HOST = 'cdn.jsdmirror.com';
+const ICON = `https://${ICON_HOST}/gh/Koolson/Qure@master/IconSet/Color/`;
 // 规则集统一取 MetaCubeX/meta-rules-dat（.mrs 体积小、解析快）
 const RULESET = 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/';
 
@@ -572,6 +573,8 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
   // ---- 规则 ----
   // 前置：国内/私有网络优先直连，避免被后面的服务规则截走
   const prefixRules = [
+    // 组图标由 FlClash 自己下载，走代理容易超时（每个图标只拉一次，失败就退化成显示组名首字母），固定直连
+    `DOMAIN,${ICON_HOST},直连`,
     'RULE-SET,private,直连',
     'RULE-SET,private_ip,直连,no-resolve',
     'RULE-SET,geolocation_cn,直连',
