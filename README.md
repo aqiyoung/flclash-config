@@ -125,7 +125,7 @@ GLOBAL
 - **`ipv6` 保持 `false`**（沿用原脚本设置）。如果你的网络有原生 IPv6 并且希望走 IPv6，需要同时改全局 `ipv6` 和 `dns.ipv6`。
 - **`hosts` 会屏蔽 B 站 PCDN**（`+.mcdn.bilivideo.com` 等解析到 `0.0.0.0`）。不需要的话删掉 `buildDnsAndHosts()` 里那四行即可。
 - **`external-controller` 的 `secret` 是硬编码的**，且这个仓库是公开的。如果你开了 `allow-lan` 并暴露了 9090 端口，建议换成自己的随机串。
-- 图标走 **cdn.jsdmirror.com**（jsDelivr 国内镜像），规则集仍走 **jsDelivr**。要换的话改 `ICON_HOST` / `RULESET` 两个常量即可；`ICON_HOST` 同时被规则 `DOMAIN,cdn.jsdmirror.com,直连` 引用，会跟着一起变。
+- 图标与规则集统一走 **cdn.jsdmirror.com**（jsDelivr 国内镜像）。要换 CDN 只需改 `CDN_HOST` 一个常量，`ICON`、`RULESET` 和直连规则 `DOMAIN,...` 都从它派生。
 - **组图标由 FlClash 自己下载，且每个图标只拉一次**。那一次没成功（超时/被限速）就退化成显示组名首字母（GLOBAL → `G`、Steam → `S`），刷新界面不会重试，只有重启 FlClash 才会重来。图标请求若走代理容易失败，所以上面加了图标域名直连规则；直连反而更差的话，删掉 `buildGroupsAndRules()` 里那一行 `DOMAIN,...` 即可。
 
 ---
@@ -134,5 +134,5 @@ GLOBAL
 
 - 原脚本：hheshenghuan-cloud/ziji
 - 结构与思路参考：[AIsouler/MyClash](https://github.com/AIsouler/MyClash)
-- 规则集：[MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)、[DustinWin/ruleset_geodata](https://github.com/DustinWin/ruleset_geodata)、[qichiyuhub/rule](https://github.com/qichiyuhub/rule)、[GitMetaio/rule](https://github.com/GitMetaio/rule)
+- 规则集：[MetaCubeX/meta-rules-dat](https://github.com/MetaCubeX/meta-rules-dat)、[DustinWin/ruleset_geodata](https://github.com/DustinWin/ruleset_geodata)、[qichiyuhub/rule](https://github.com/qichiyuhub/rule)、[hheshenghuan-cloud/ziji](https://github.com/hheshenghuan-cloud/ziji)
 - 图标：[Koolson/Qure](https://github.com/Koolson/Qure)

@@ -65,11 +65,11 @@ const options = {
 // 二、常量
 // =====================================================================
 
-// 图标走 jsDelivr 镜像，比 cdn.jsdelivr.net 在国内稳定，也避开被墙的 raw.githubusercontent.com
-const ICON_HOST = 'cdn.jsdmirror.com';
-const ICON = `https://${ICON_HOST}/gh/Koolson/Qure@master/IconSet/Color/`;
+// 图标与规则集统一走 jsDelivr 镜像，比 cdn.jsdelivr.net 在国内稳定，也避开被墙的 raw.githubusercontent.com
+const CDN_HOST = 'cdn.jsdmirror.com';
+const ICON = `https://${CDN_HOST}/gh/Koolson/Qure@master/IconSet/Color/`;
 // 规则集统一取 MetaCubeX/meta-rules-dat（.mrs 体积小、解析快）
-const RULESET = 'https://cdn.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/';
+const RULESET = `https://${CDN_HOST}/gh/MetaCubeX/meta-rules-dat@meta/`;
 
 const TEST_URL = 'https://www.gstatic.com/generate_204';
 
@@ -175,7 +175,7 @@ const providerDefs = {
     behavior: 'domain',
     format: 'mrs',
     interval: 86400,
-    url: 'https://cdn.jsdelivr.net/gh/DustinWin/ruleset_geodata@mihomo-ruleset/fakeip-filter.mrs',
+    url: `https://${CDN_HOST}/gh/DustinWin/ruleset_geodata@mihomo-ruleset/fakeip-filter.mrs`,
     path: './ruleset/fakeip_filter.mrs',
   },
   ziji: {
@@ -184,7 +184,7 @@ const providerDefs = {
     behavior: 'domain',
     format: 'yaml',
     interval: 86400,
-    url: 'https://cdn.jsdelivr.net/gh/hheshenghuan-cloud/ziji@main/ziji.yaml',
+    url: `https://${CDN_HOST}/gh/hheshenghuan-cloud/ziji@main/ziji.yaml`,
     path: './ruleset/ziji.yaml',
   },
   zijign: {
@@ -193,7 +193,7 @@ const providerDefs = {
     behavior: 'domain',
     format: 'yaml',
     interval: 86400,
-    url: 'https://cdn.jsdelivr.net/gh/hheshenghuan-cloud/ziji@main/zijign.yaml',
+    url: `https://${CDN_HOST}/gh/hheshenghuan-cloud/ziji@main/zijign.yaml`,
     path: './ruleset/zijign.yaml',
   },
   proxylite: {
@@ -202,7 +202,7 @@ const providerDefs = {
     behavior: 'classical',
     format: 'text',
     interval: 86400,
-    url: 'https://cdn.jsdelivr.net/gh/qichiyuhub/rule@main/rules/proxy.list',
+    url: `https://${CDN_HOST}/gh/qichiyuhub/rule@main/rules/proxy.list`,
     path: './ruleset/proxylite.list',
   },
 
@@ -238,14 +238,7 @@ const providerDefs = {
   tiktok: geosite('tiktok'),
   netflix: geosite('netflix'),
   netflix_ip: geoip('netflix', 'netflix_ip'),
-  disney: {
-    type: 'http',
-    behavior: 'domain',
-    format: 'mrs',
-    interval: 86400,
-    url: 'https://cdn.jsdelivr.net/gh/GitMetaio/rule@master/rule/Clash/Disney/Disney_OCD_Domain.mrs',
-    path: './ruleset/disney.mrs',
-  },
+  disney: geosite('disney'),
   spotify: geosite('spotify'),
   pikpak: geosite('pikpak'),
   cryptocurrency: geosite('category-cryptocurrency', 'cryptocurrency'),
@@ -524,7 +517,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
   const autoGroups = [
     { ...commonGroupOption, ...includeAllOption, type: 'url-test', name: '自动选择', proxies: [], tolerance: 50, hidden: true, icon: icon('Auto.png') },
     { ...commonGroupOption, ...includeAllOption, type: 'fallback', name: '故障转移', proxies: [], hidden: true, icon: icon('Round_Robin.png') },
-    { ...commonGroupOption, ...includeAllOption, type: 'load-balance', strategy: 'sticky-sessions', name: '负载均衡', proxies: [], hidden: true, icon: icon('Round_Robin_1.png') },
+    { ...commonGroupOption, ...includeAllOption, type: 'load-balance', strategy: 'sticky-sessions', name: '负载均衡', proxies: [], hidden: true, icon: icon('Stack.png') },
   ].filter((g) => options[g.name]);
 
   const masterGroup = {
@@ -574,7 +567,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
   // 前置：国内/私有网络优先直连，避免被后面的服务规则截走
   const prefixRules = [
     // 组图标由 FlClash 自己下载，走代理容易超时（每个图标只拉一次，失败就退化成显示组名首字母），固定直连
-    `DOMAIN,${ICON_HOST},直连`,
+    `DOMAIN,${CDN_HOST},直连`,
     'RULE-SET,private,直连',
     'RULE-SET,private_ip,直连,no-resolve',
     'RULE-SET,geolocation_cn,直连',
