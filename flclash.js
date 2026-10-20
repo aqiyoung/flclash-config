@@ -275,7 +275,7 @@ const BASE_PROVIDERS = [
 
 // providers 为依赖的规则集名；direct 表示给该组补一个「直连」选项
 const serviceConfigs = [
-  { name: 'GoogleFCM', icon: icon('Rocket.png'), providers: ['googlefcm'], rules: ['RULE-SET,googlefcm,GoogleFCM'] },
+  { name: 'GoogleFCM', icon: icon('Spark.png'), providers: ['googlefcm'], rules: ['RULE-SET,googlefcm,GoogleFCM'] },
   { name: 'YouTube', icon: icon('YouTube.png'), providers: ['youtube'], rules: ['RULE-SET,youtube,YouTube'] },
   {
     name: 'Google',
@@ -532,7 +532,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
     ...includeAllOption,
     name: DEFAULT_GROUP,
     proxies: [...AUTO_GROUPS.filter((g) => options[g]), ...regionSelectNames, DIRECT_GROUP],
-    icon: icon('Proxy.png'),
+    icon: icon('Rocket.png'),
   };
 
   const serviceGroups = enabledServices.map((svc) => ({
@@ -567,7 +567,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
       DIRECT_GROUP,
       ...regionGroups.groups.map((g) => g.name),
     ],
-    icon: icon('Global.png'),
+    icon: icon('Area.png'),
   };
 
   // ---- 规则 ----
