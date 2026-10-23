@@ -561,6 +561,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
       DIRECT_GROUP,
       ...regionGroups.groups.map((g) => g.name),
     ],
+    // 注意：GLOBAL 的图标由客户端自己固定渲染，这里的 icon 不生效，仅作兜底
     icon: icon('Global.png'),
   };
 
