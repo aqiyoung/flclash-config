@@ -1,16 +1,18 @@
-# flclash-config
+# skyward-config
 
-给 **FlClash / mihomo** 用的配置覆写脚本。
+给 **Skyward / mihomo** 用的配置覆写脚本。
 
 把机场订阅里那份原始、杂乱的配置，重建成一套干净好用的配置：剔除广告与信息节点、按地区分组、按服务分流、DNS 也按规则集分流。
 
-结构参考 [AIsouler/MyClash](https://github.com/AIsouler/MyClash) 的 `mihomoScript.js`，接口遵循 FlClash 扩展脚本约定（`function main(config)` 接收订阅配置、返回改写后的配置）。
+脚本只依赖 mihomo 内核能力，不绑定具体客户端——Skyward、Clash Meta 系列（mihomo party、Verge Rev 等）都能直接用，接口是通用的 `function main(config)` 覆写脚本。
+
+结构参考 [AIsouler/MyClash](https://github.com/AIsouler/MyClash) 的 `mihomoScript.js`，接口遵循 mihomo 扩展脚本约定（`function main(config)` 接收订阅配置、返回改写后的配置）。
 
 ---
 
 ## 使用方法
 
-1. 打开 FlClash → **配置**（Profiles）→ 点进你的订阅 → 编辑
+1. 打开 Skyward → **配置**（Profiles）→ 点进你的订阅 → 编辑
 2. 找到 **扩展脚本** 区块，点 **前往配置脚本** → **添加**
 3. **标签** 随便填（例如 `aqiyoung`），**URL** 填下面的链接，点 **同步** 拉取脚本内容
 4. 回到订阅编辑页 → **扩展脚本** → 勾选刚添加的脚本（脚本模式）
@@ -19,16 +21,16 @@
 ### 脚本链接
 
 ```
-https://cdn.jsdelivr.net/gh/aqiyoung/flclash-config@main/flclash.js
+https://cdn.jsdelivr.net/gh/aqiyoung/skyward-config@main/skyward.js
 ```
 
 备选链接：
 
 | 链接 | 说明 |
 | --- | --- |
-| `https://raw.githubusercontent.com/aqiyoung/flclash-config/main/flclash.js` | 改动即时生效，但国内可能被墙 |
-| `https://gh-proxy.com/https://raw.githubusercontent.com/aqiyoung/flclash-config/main/flclash.js` | raw 的国内加速代理，实测即时生效 |
-| `https://cdn.jsdelivr.net/gh/aqiyoung/flclash-config@<commit>/flclash.js` | 把 `<commit>` 换成最新 commit 的短哈希（如 `@22fc01e`） |
+| `https://raw.githubusercontent.com/aqiyoung/skyward-config/main/skyward.js` | 改动即时生效，但国内可能被墙 |
+| `https://gh-proxy.com/https://raw.githubusercontent.com/aqiyoung/skyward-config/main/skyward.js` | raw 的国内加速代理，实测即时生效 |
+| `https://cdn.jsdelivr.net/gh/aqiyoung/skyward-config@<commit>/skyward.js` | 把 `<commit>` 换成最新 commit 的短哈希（如 `@22fc01e`） |
 
 > **关于更新延迟**
 >
@@ -40,7 +42,7 @@ https://cdn.jsdelivr.net/gh/aqiyoung/flclash-config@main/flclash.js
 >
 > 想立刻拿到最新版，二选一：
 > 1. 把 URL 换成上面的 **raw** 或 **gh-proxy** 链接；
-> 2. 把 jsDelivr 链接里的 `@main` 换成**最新 commit 的短哈希**（例如 `...@22fc01e/flclash.js`）。
+> 2. 把 jsDelivr 链接里的 `@main` 换成**最新 commit 的短哈希**（例如 `...@22fc01e/skyward.js`）。
 >    哈希一变就是全新的缓存键，立刻生效；同一个哈希的内容永远不会变。
 
 ---
@@ -126,7 +128,7 @@ GLOBAL
 - **`hosts` 会屏蔽 B 站 PCDN**（`+.mcdn.bilivideo.com` 等解析到 `0.0.0.0`）。不需要的话删掉 `buildDnsAndHosts()` 里那四行即可。
 - **`external-controller` 的 `secret` 是硬编码的**，且这个仓库是公开的。如果你开了 `allow-lan` 并暴露了 9090 端口，建议换成自己的随机串。
 - 图标与规则集统一走 **cdn.jsdmirror.com**（jsDelivr 国内镜像）。要换 CDN 只需改 `CDN_HOST` 一个常量，`ICON`、`RULESET` 和直连规则 `DOMAIN,...` 都从它派生。
-- **组图标由 FlClash 自己下载，且每个图标只拉一次**。那一次没成功（超时/被限速）就退化成显示组名首字母（GLOBAL → `G`、Steam → `S`），刷新界面不会重试，只有重启 FlClash 才会重来。图标请求若走代理容易失败，所以上面加了图标域名直连规则；直连反而更差的话，删掉 `buildGroupsAndRules()` 里那一行 `DOMAIN,...` 即可。
+- **组图标由客户端自己下载，且每个图标只拉一次**。那一次没成功（超时/被限速）就退化成显示组名首字母（GLOBAL → `G`、Steam → `S`），刷新界面不会重试，只有重启客户端才会重来。图标请求若走代理容易失败，所以上面加了图标域名直连规则；直连反而更差的话，删掉 `buildGroupsAndRules()` 里那一行 `DOMAIN,...` 即可。
 
 ---
 

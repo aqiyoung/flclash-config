@@ -1,7 +1,8 @@
 /**
- * FlClash / Mihomo 配置覆写脚本
+ * Skyward / Mihomo 配置覆写脚本
  *
- * 用法：在 FlClash 的「脚本」中导入本文件，然后将其应用到订阅配置。
+ * 用法：在 Skyward 的「脚本」中导入本文件，然后将其应用到订阅配置。
+ * 也可直接用于其他 mihomo 内核客户端（Clash Meta 系列）的覆写脚本，不依赖具体客户端。
  * 入口 main(config) 接收订阅解析后的配置对象，返回覆写后的完整配置对象。
  *
  * 结构参考：https://github.com/AIsouler/MyClash/blob/main/Script/mihomoScript.js
@@ -566,7 +567,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
   // ---- 规则 ----
   // 前置：国内/私有网络优先直连，避免被后面的服务规则截走
   const prefixRules = [
-    // 组图标由 FlClash 自己下载，走代理容易超时（每个图标只拉一次，失败就退化成显示组名首字母），固定直连
+    // 组图标由客户端自己下载，走代理容易超时（每个图标只拉一次，失败就退化成显示组名首字母），固定直连
     `DOMAIN,${CDN_HOST},直连`,
     'RULE-SET,private,直连',
     'RULE-SET,private_ip,直连,no-resolve',
