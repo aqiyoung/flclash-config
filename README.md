@@ -54,9 +54,9 @@ https://cdn.jsdelivr.net/gh/aqiyoung/skyward-config@main/skyward.js
 | **节点治理** | 机场把「剩余流量 / 到期时间 / 官网」这类**信息节点当成节点**投放，脚本会直接把它们从配置里剔除；同时剥离零宽字符、补全地区国旗、按名字去重、修复 `dialer-proxy` 的改名引用 |
 | **地区分组** | 按节点名自动归类 **香港 / 日本 / 美国 / 新加坡 / 台湾**，每个地区生成一个手动组和一个 `地区-自动选择` 测速组；没归类的节点进「其他节点」 |
 | **服务分流** | 20 个常用服务分组：GoogleFCM / YouTube / Google / ChatGPT / GitHub / OneDrive / Microsoft / APPLE / Telegram / Steam / Twitter / Meta / Line / TikTok / NETFLIX / Disney / Spotify / PikPak / Crypto / AdBlock |
-| **国内直连** | 国内域名、国内 IP、私有网络、Steam 下载、NVIDIA 等优先直连，不会被服务规则截走 |
-| **DNS 分流** | `fake-ip` 模式；国内域名走国内 DNS、私有网络走系统 DNS、默认走境外 DNS；`hosts` 修复 Google Play 下载、屏蔽 B 站 PCDN |
-| **内核参数** | 补 `find-process-mode`、`ntp`，统一各测速参数 |
+| **国内直连** | 国内域名、国内 IP、私有网络、Steam 下载、NVIDIA、国内银行与支付域名优先直连；另可按**进程名**把微信 / 支付宝 / 抖音这类国产 App 钉在直连上，不会被服务规则截走 |
+| **DNS 分流** | `fake-ip` 模式；国内域名走国内 DNS、私有网络走系统 DNS、默认走境外 DNS；银行域名走真实解析；`hosts` 修复 Google Play 下载、屏蔽 B 站 PCDN |
+| **内核参数** | 补 `find-process-mode`、`ntp`，统一各测速参数（间隔 / 超时 / 容差可配），DoH 关掉 HTTP/3 以免和「屏蔽国外QUIC」打架 |
 
 ### 生成的策略组
 
@@ -68,20 +68,21 @@ GLOBAL
     ├── 负载均衡 (load-balance, sticky-sessions)
     ├── 各服务分组             ← 默认指向「默认代理」
     ├── 漏网之鱼               ← 兜底
-    ├── 直连                   ← 5 个直连出口（双栈 / v4走先 / v6优先 / 仅v4 / 仅v6）
+    ├── 直连                   ← 3 个直连出口（双栈 / IPv4优先 / 仅IPv4），开「启用IPv6」再补 2 个
     └── 各地区组 + 其他节点
 ```
 
 ### 规则顺序
 
 ```
-1. 私有网络 / 国内域名 / 国内 IP / Steam·NVIDIA 等  → 直连
-2. （可选）屏蔽国外 QUIC：非中国大陆的 UDP/443 → REJECT，逼国外流量回落 TCP
-3. 自建域名 / 指定进程（PUBG）                       → 默认代理
-4. 各服务规则（AdBlock 置顶）
-5. proxylite / geolocation-!cn                      → 默认代理
-6. 国内 IP 兜底                                      → 直连
-7. MATCH                                            → 漏网之鱼
+1. 国产 App 按进程名（微信 / 支付宝 / 抖音 …）      → 直连
+2. 图标 CDN / 私有网络 / 国内域名 / 银行 / Steam·NVIDIA  → 直连
+3. （可选）屏蔽国外 QUIC：非中国大陆的 UDP/443 → REJECT，逼国外流量回落 TCP
+4. 自建域名 / 指定进程（PUBG）                       → 默认代理
+5. 各服务规则（AdBlock 置顶：广告域 + 强化广告集）
+6. proxylite / geolocation-!cn                      → 默认代理
+7. 国内 IP 兜底                                      → 直连
+8. MATCH                                            → 漏网之鱼
 ```
 
 ---
@@ -119,12 +120,43 @@ GLOBAL
 | `屏蔽国外QUIC` | `true` | 非中国大陆的 UDP/443 一律拒绝，规避 QUIC 走代理的不稳定 |
 | `分流组添加所有节点` | `false` | `true` 会把全部节点塞进每个分流组（列表会很长） |
 
+### IPv6
+
+| 开关 | 默认 | 说明 |
+| --- | --- | --- |
+| `启用IPv6` | `false` | 同时控制内核 `ipv6` 与 `dns.ipv6`。关闭时会一并撤掉「IPv6优先 / 仅IPv6」两个直连出口——内核不开 IPv6，那两个出口选了也不生效，留着只会误导 |
+
+### 测速
+
+| 开关 | 默认 | 说明 |
+| --- | --- | --- |
+| `测速间隔` | `300` | 秒。自动测速的间隔，调小更灵敏但更费流量 |
+| `测速超时` | `3000` | 毫秒。单次测速超时，弱网可放宽到 `5000` |
+| `自动选择容差` | `50` | 毫秒。`url-test` 组内切换容差，调大更少抖动 |
+
+### 分流准确性
+
+| 开关 | 默认 | 说明 |
+| --- | --- | --- |
+| `国内应用直连` | `true` | 按进程名把国产 App（微信 / QQ / 支付宝 / 淘宝 / 美团 / 抖音 / 三大视频 / 音乐 / 地图等 18 个）钉在直连。这些 App 大量走自有协议与直连 IP，域名规则抓不全，容易被服务规则误截走代理 |
+| `国内银行直连` | `true` | 国内银行与支付域名走直连，DNS 走国内，且从 `fake-ip` 里排除（部分网银的风控与证书校验见不得 fake-ip） |
+
+> 进程名规则依赖 TUN + `find-process-mode: strict`，脚本里两个都已开启。
+
+### 广告与追踪
+
+| 开关 | 默认 | 说明 |
+| --- | --- | --- |
+| `强化广告拦截` | `true` | 在 `category-ads` 之外再叠 `category-ads-all` 与 DustinWin 的 `ads` 规则集 |
+| `拦截追踪器` | `false` | 统计 / 追踪域名一起拒掉。**默认关**：一拒埋点，部分站点的登录与购买会莫名失败，代价不值 |
+
 ---
 
 ## 已知限制
 
 - **订阅必须内联 `proxies`**。如果订阅使用 `proxy-providers`，脚本会直接抛错——因为节点过滤和地区分组需要能读到节点列表。绝大多数机场订阅都是内联 `proxies`。
-- **`ipv6` 保持 `false`**（沿用原脚本设置）。如果你的网络有原生 IPv6 并且希望走 IPv6，需要同时改全局 `ipv6` 和 `dns.ipv6`。
+- **IPv6 默认关闭**，由 `启用IPv6` 一个开关统一控制全局 `ipv6`、`dns.ipv6` 和 IPv6 直连出口。有原生 IPv6 且想用的话，把它改成 `true` 即可，不用再手动改两处。
+- **Telegram 频道里的 sponsored 广告挡不掉**。广告由 MTProto 下发（`messages.getSponsoredMessages`），和普通消息走同一条 DC 连接、媒体共用同一个 CDN，没有可识别的域名或 IP 特征，域名规则无从下手。能拦的只有内置浏览器 / Instant View 里网页的广告。真要去掉，得靠第三方客户端或 Telegram Premium。
 - **`hosts` 会屏蔽 B 站 PCDN**（`+.mcdn.bilivideo.com` 等解析到 `0.0.0.0`）。不需要的话删掉 `buildDnsAndHosts()` 里那四行即可。
 - **`external-controller` 的 `secret` 是硬编码的**，且这个仓库是公开的。如果你开了 `allow-lan` 并暴露了 9090 端口，建议换成自己的随机串。
 - 图标与规则集统一走 **cdn.jsdmirror.com**（jsDelivr 国内镜像）。要换 CDN 只需改 `CDN_HOST` 一个常量，`ICON`、`RULESET` 和直连规则 `DOMAIN,...` 都从它派生。

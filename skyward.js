@@ -18,6 +18,8 @@
  *   5. DNS：fake-ip + 按规则集分流解析（国内走国内 DNS、私有网络走系统 DNS），
  *      并补充 hosts（去掉 B 站 PCDN、修复 Google Play 下载）。
  *   6. 兜底规则走 proxylite / geolocation-!cn / cn_ip，并可选屏蔽国外 QUIC。
+ *   7. 一致性：内核 ipv6 与 dns.ipv6 由「启用IPv6」统一控制，关闭时撤掉失效的 IPv6 直连出口；
+ *      DoH 关掉 h3，避免和「屏蔽国外QUIC」自相打架。
  */
 
 // =====================================================================
@@ -60,6 +62,22 @@ const options = {
   过滤非地区节点: true, // 剔除名字像「剩余流量/到期时间/官网」这类非地区节点
   屏蔽国外QUIC: true, // 强制国外流量回落到 TCP，规避 QUIC 走代理的不稳定
   分流组添加所有节点: false, // true 则把全部节点塞进每个分流组（列表会很长）
+
+  // ---- IPv6 ----
+  启用IPv6: false, // 同时控制内核 ipv6 与 dns.ipv6，并把 IPv6 直连出口一并撤掉
+
+  // ---- 测速 ----
+  测速间隔: 300, // 秒：自动测速的间隔，调小更灵敏但更费流量
+  测速超时: 3000, // 毫秒：单次测速超时，弱网可放宽到 5000
+  自动选择容差: 50, // 毫秒：url-test 组内节点切换容差，调大更少抖动
+
+  // ---- 分流准确性 ----
+  国内应用直连: true, // 微信/支付宝/抖音这类国产 App 按进程名直连，避免被服务规则截走
+  国内银行直连: true, // 国内银行与支付域名走直连，DNS 也走国内
+
+  // ---- 广告与追踪 ----
+  强化广告拦截: true, // 在 category-ads 之外再叠 category-ads-all 与 DustinWin 的 ads 规则集
+  拦截追踪器: false, // 统计/追踪域名一起拒掉，过严时可能有站点功能异常
 };
 
 // =====================================================================
@@ -88,13 +106,18 @@ const EXCLUDE_FILTER_CONFIG = `(?i)${EXCLUDE_FILTER_BODY}`;
 // 刻意保留 ZWNJ/ZWJ 与变体选择符（它们参与 emoji 与连字，有语义）。
 const INVISIBLE_CHARS = /[\u00AD\u180E\u200B\u200E\u200F\u202A-\u202E\u2060-\u206F\uFEFF\u115F\u1160\u3164\uFFA0]/g;
 
-// 直连出口：提供双栈 / IPv4/IPv6 优先等多种选择
+// 直连出口：提供双栈 / IPv4/IPv6 优先等多种选择。
+// 内核 ipv6 关闭时，带 IPv6 的两个出口是不会生效的，留着只会让人误选——一并撤掉。
 const directProxies = [
   { name: '🇨🇳 直连 | 双栈', type: 'direct' },
   { name: '🇨🇳 直连 | IPv4优先', type: 'direct', 'ip-version': 'ipv4-prefer' },
-  { name: '🇨🇳 直连 | IPv6优先', type: 'direct', 'ip-version': 'ipv6-prefer' },
   { name: '🇨🇳 直连 | 仅IPv4', type: 'direct', 'ip-version': 'ipv4' },
-  { name: '🇨🇳 直连 | 仅IPv6', type: 'direct', 'ip-version': 'ipv6' },
+  ...(options.启用IPv6
+    ? [
+        { name: '🇨🇳 直连 | IPv6优先', type: 'direct', 'ip-version': 'ipv6-prefer' },
+        { name: '🇨🇳 直连 | 仅IPv6', type: 'direct', 'ip-version': 'ipv6' },
+      ]
+    : []),
 ];
 const DIRECT_GROUP = '直连';
 const directProxyNames = directProxies.map((p) => p.name);
@@ -103,6 +126,29 @@ const DEFAULT_GROUP = '默认代理';
 const AUTO_GROUPS = ['自动选择', '故障转移', '负载均衡'];
 const FINAL_GROUP = '漏网之鱼';
 const OTHER_GROUP = '其他节点';
+
+// 国内常见 App 的包名。按进程直连比按域名判断更准：这些 App 大量走自有协议与直连 IP，
+// 域名规则抓不全，反而会被后面的服务规则误截走代理，绕远又慢。
+const DOMESTIC_PROCESSES = [
+  'com.tencent.mm', // 微信
+  'com.tencent.mobileqq', // QQ
+  'com.eg.android.AlipayGphone', // 支付宝
+  'com.taobao.taobao', // 淘宝
+  'com.sankuai.meituan', // 美团
+  'com.dianping.v1', // 大众点评
+  'com.jingdong.pdj', // 京东
+  'com.xunmeng.pinduoduo', // 拼多多
+  'com.ss.android.ugc.aweme', // 抖音
+  'com.tencent.qqlive', // 腾讯视频
+  'com.youku.phone', // 优酷
+  'com.qiyi.video', // 爱奇艺
+  'com.netease.cloudmusic', // 网易云音乐
+  'com.kugou.android', // 酷狗
+  'cn.kuwo.player', // 酷我
+  'com.baidu.BaiduMap', // 百度地图
+  'com.autonavi.minimap', // 高德地图
+  'com.UCMobile', // UC 浏览器
+];
 
 // =====================================================================
 // 三、地区定义
@@ -243,7 +289,23 @@ const providerDefs = {
   spotify: geosite('spotify'),
   pikpak: geosite('pikpak'),
   cryptocurrency: geosite('category-cryptocurrency', 'cryptocurrency'),
+
+  // ---- 广告与追踪 ----
   category_ads: geosite('category-ads', 'category_ads'),
+  category_ads_all: geosite('category-ads-all', 'category_ads_all'), // 比 category-ads 覆盖更广
+  tracker: geosite('tracker'), // 统计/追踪类域名，默认只引入不用
+  dustin_ads: {
+    // DustinWin 的反广告清单，与 MetaCubeX 的 category-ads 互为补充
+    type: 'http',
+    behavior: 'domain',
+    format: 'mrs',
+    interval: 86400,
+    url: `https://${CDN_HOST}/gh/DustinWin/ruleset_geodata@mihomo-ruleset/ads.mrs`,
+    path: './ruleset/dustin_ads.mrs',
+  },
+
+  // ---- 国内直连补漏 ----
+  bank_cn: geosite('category-bank-cn', 'bank_cn'), // 国内银行与支付
 };
 
 // 无条件引入的规则集
@@ -261,11 +323,21 @@ const BASE_PROVIDERS = [
   'zijign',
   'proxylite',
   'geolocation-!cn',
+  // 国内银行/支付直连，需要时才拉规则集，省一份下载
+  ...(options.国内银行直连 ? ['bank_cn'] : []),
 ];
 
 // =====================================================================
 // 五、服务分流定义
 // =====================================================================
+
+// 广告拦截：默认只拦广告域；开「强化」再叠上更广的规则集。
+// 追踪器默认不拦——统计/埋点一拒，部分站点的登录与购买会莫名失败，代价不值。
+const adProviders = [
+  'category_ads',
+  ...(options.强化广告拦截 ? ['category_ads_all', 'dustin_ads'] : []),
+  ...(options.拦截追踪器 ? ['tracker'] : []),
+];
 
 // providers 为依赖的规则集名；direct 表示给该组补一个「直连」选项
 const serviceConfigs = [
@@ -334,8 +406,8 @@ const serviceConfigs = [
     name: 'AdBlock',
     icon: icon('AdBlack.png'),
     reject: true,
-    providers: ['category_ads'],
-    rules: ['RULE-SET,category_ads,AdBlock'],
+    providers: adProviders,
+    rules: adProviders.map((name) => `RULE-SET,${name},AdBlock`),
   },
 ];
 
@@ -433,8 +505,8 @@ function filterAndNormalizeProxies(config) {
 // =====================================================================
 
 const commonGroupOption = {
-  interval: 300,
-  timeout: 3000,
+  interval: options.测速间隔,
+  timeout: options.测速超时,
   'max-failed-times': 3,
   lazy: true,
 };
@@ -474,7 +546,8 @@ function buildRegionGroups(filteredProxies) {
         type: 'url-test',
         name: autoName,
         proxies,
-        tolerance: 50,
+        url: TEST_URL,
+        tolerance: options.自动选择容差,
         hidden: true,
         icon: icon('Auto.png'),
       });
@@ -516,9 +589,9 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
   };
 
   const autoGroups = [
-    { ...commonGroupOption, ...includeAllOption, type: 'url-test', name: '自动选择', proxies: [], tolerance: 50, hidden: true, icon: icon('Auto.png') },
-    { ...commonGroupOption, ...includeAllOption, type: 'fallback', name: '故障转移', proxies: [], hidden: true, icon: icon('Round_Robin.png') },
-    { ...commonGroupOption, ...includeAllOption, type: 'load-balance', strategy: 'sticky-sessions', name: '负载均衡', proxies: [], hidden: true, icon: icon('Stack.png') },
+    { ...commonGroupOption, ...includeAllOption, type: 'url-test', name: '自动选择', proxies: [], url: TEST_URL, tolerance: options.自动选择容差, hidden: true, icon: icon('Auto.png') },
+    { ...commonGroupOption, ...includeAllOption, type: 'fallback', name: '故障转移', proxies: [], url: TEST_URL, hidden: true, icon: icon('Round_Robin.png') },
+    { ...commonGroupOption, ...includeAllOption, type: 'load-balance', strategy: 'sticky-sessions', name: '负载均衡', proxies: [], url: TEST_URL, hidden: true, icon: icon('Stack.png') },
   ].filter((g) => options[g.name]);
 
   const masterGroup = {
@@ -567,7 +640,13 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
 
   // ---- 规则 ----
   // 前置：国内/私有网络优先直连，避免被后面的服务规则截走
+  // 进程匹配最准，放最前面：命中就不再往下看域名规则
+  const domesticProcessRules = options.国内应用直连
+    ? DOMESTIC_PROCESSES.map((pkg) => `PROCESS-NAME,${pkg},直连`)
+    : [];
+
   const prefixRules = [
+    ...domesticProcessRules,
     // 组图标由客户端自己下载，走代理容易超时（每个图标只拉一次，失败就退化成显示组名首字母），固定直连
     `DOMAIN,${CDN_HOST},直连`,
     'RULE-SET,private,直连',
@@ -578,6 +657,7 @@ function buildGroupsAndRules(filteredProxies, regionGroups) {
     'RULE-SET,apple_cn,直连',
     'RULE-SET,microsoft_cn,直连',
     'RULE-SET,nvidia_cn,直连',
+    ...(options.国内银行直连 ? ['RULE-SET,bank_cn,直连'] : []),
   ];
 
   // 屏蔽国外 QUIC：非中国大陆的 UDP/443 一律拒绝，逼迫回落 TCP
@@ -618,16 +698,22 @@ function buildDnsAndHosts() {
 
   const fakeIpFilter = ['rule-set:private', 'rule-set:fakeip_filter', 'rule-set:geolocation_cn', '+.push.apple.com', 'mtalk.google.com'];
   if (options.GoogleFCM) fakeIpFilter.push('rule-set:googlefcm');
+  // 银行类域名要走真实解析，fake-ip 会让部分网银的风控与证书校验出问题
+  if (options.国内银行直连) fakeIpFilter.push('rule-set:bank_cn');
 
   const nameserverPolicy = {
     'rule-set:private': 'system',
     'rule-set:geolocation_cn': cnDoh,
   };
   if (options.GoogleFCM) nameserverPolicy['rule-set:googlefcm'] = ['https://8.8.8.8/dns-query#默认代理'];
+  // 直连的域名就该交给国内 DNS 解析，别拿境外 DNS 的结果去直连
+  if (options.国内银行直连) nameserverPolicy['rule-set:bank_cn'] = cnDoh;
 
   const dns = {
     enable: true,
-    ipv6: false,
+    ipv6: options.启用IPv6,
+    // 国外 QUIC 被拒（见 屏蔽国外QUIC），DoH 若跑在 HTTP/3 上会一起被拒掉，干脆禁用 h3
+    'prefer-h3': false,
     listen: '0.0.0.0:1053',
     'cache-algorithm': 'arc',
     'use-hosts': true,
@@ -687,7 +773,7 @@ function main(config) {
     ...config,
 
     mode: 'rule',
-    ipv6: false,
+    ipv6: options.启用IPv6,
 
     'mixed-port': 7890,
     'socks-port': 7891,
